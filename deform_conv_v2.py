@@ -43,22 +43,23 @@ class DeformConv2d(nn.Module):
             x = self.zero_padding(x)
 
         # (b, 2N, h, w)
+        #获取所有卷积核在feature map上的中心坐标
         p = self._get_p(offset, dtype)
 
         # (b, h, w, 2N)
         p = p.contiguous().permute(0, 2, 3, 1)
-        q_lt = p.detach().floor()
-        q_rb = q_lt + 1
+        q_lt = p.detach().floor() #q_lt与p共享内存，但从计算图中脱离出来不计算梯度
+        q_rb = q_lt + 1 #网格右侧坐标
 
-        q_lt = torch.cat([torch.clamp(q_lt[..., :N], 0, x.size(2)-1), torch.clamp(q_lt[..., N:], 0, x.size(3)-1)], dim=-1).long()
-        q_rb = torch.cat([torch.clamp(q_rb[..., :N], 0, x.size(2)-1), torch.clamp(q_rb[..., N:], 0, x.size(3)-1)], dim=-1).long()
-        q_lb = torch.cat([q_lt[..., :N], q_rb[..., N:]], dim=-1)
-        q_rt = torch.cat([q_rb[..., :N], q_lt[..., N:]], dim=-1)
+        q_lt = torch.cat([torch.clamp(q_lt[..., :N], 0, x.size(2)-1), torch.clamp(q_lt[..., N:], 0, x.size(3)-1)], dim=-1).long()#左下角坐标
+        q_rb = torch.cat([torch.clamp(q_rb[..., :N], 0, x.size(2)-1), torch.clamp(q_rb[..., N:], 0, x.size(3)-1)], dim=-1).long()#右上角坐标
+        q_lb = torch.cat([q_lt[..., :N], q_rb[..., N:]], dim=-1) #左上角坐标，（左下角x，右上角的y）
+        q_rt = torch.cat([q_rb[..., :N], q_lt[..., N:]], dim=-1)#右下角坐标
 
         # clip p
         p = torch.cat([torch.clamp(p[..., :N], 0, x.size(2)-1), torch.clamp(p[..., N:], 0, x.size(3)-1)], dim=-1)
 
-        # bilinear kernel (b, h, w, N)
+        # bilinear kernel (b, h, w, N) 双线性插值系数
         g_lt = (1 + (q_lt[..., :N].type_as(p) - p[..., :N])) * (1 + (q_lt[..., N:].type_as(p) - p[..., N:]))
         g_rb = (1 - (q_rb[..., :N].type_as(p) - p[..., :N])) * (1 - (q_rb[..., N:].type_as(p) - p[..., N:]))
         g_lb = (1 + (q_lb[..., :N].type_as(p) - p[..., :N])) * (1 - (q_lb[..., N:].type_as(p) - p[..., N:]))
@@ -112,8 +113,10 @@ class DeformConv2d(nn.Module):
         N, h, w = offset.size(1)//2, offset.size(2), offset.size(3)
 
         # (1, 2N, 1, 1)
+        #生成卷积的相对坐标
         p_n = self._get_p_n(N, dtype)
         # (1, 2N, h, w)
+        #获取卷积核在feature map上对应的中心坐标
         p_0 = self._get_p_0(h, w, N, dtype)
         p = p_0 + p_n + offset
         return p
@@ -126,11 +129,11 @@ class DeformConv2d(nn.Module):
         x = x.contiguous().view(b, c, -1)
 
         # (b, h, w, N)
-        index = q[..., :N]*padded_w + q[..., N:]  # offset_x*w + offset_y
+        index = q[..., :N]*padded_w + q[..., N:]  # offset_x*w + offset_y 每w个元素为一行
         # (b, c, h*w*N)
-        index = index.contiguous().unsqueeze(dim=1).expand(-1, c, -1, -1, -1).contiguous().view(b, c, -1)
+        index = index.contiguous().unsqueeze(dim=1).expand(-1, c, -1, -1, -1).contiguous().view(b, c, -1) #将偏移expand到每个通道
 
-        x_offset = x.gather(dim=-1, index=index).contiguous().view(b, c, h, w, N)
+        x_offset = x.gather(dim=-1, index=index).contiguous().view(b, c, h, w, N) #通过坐标获取相应值
 
         return x_offset
 
